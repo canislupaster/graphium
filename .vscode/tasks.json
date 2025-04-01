@@ -1,0 +1,41 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Configure",
+			"type": "process",
+			"command": "node",
+			"args": ["util.js", "--type", "${input:build}", "--target", "${input:target}", "--configure"],
+			"options": {"cwd": "${workspaceFolder}/cpp"},
+			"problemMatcher": [],
+		}, {
+			"label": "Build",
+			"type": "process",
+			"command": "node",
+			"args": ["util.js", "--build"],
+			"options": {"cwd": "${workspaceFolder}/cpp"},
+			"group": {
+				"kind": "build",
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+		}
+	],
+	"inputs": [
+    {
+      "type": "pickString",
+      "id": "target",
+      "description": "CMake target",
+      "options": [ "emscripten", "native" ],
+      "default": "component"
+    },
+    {
+      "type": "pickString",
+      "id": "build",
+      "description": "CMake build type",
+      "options": [ "debug", "release" ],
+      "default": "component"
+    }
+	]
+}

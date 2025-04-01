@@ -1,0 +1,28 @@
+{
+  "name": "project",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "globals": "^16",
+    "typescript": "^5",
+    "vite": "^6"
+  },
+  "dependencies": {
+    "@mantine/core": "^7.17.3",
+    "@mantine/hooks": "^7.17.3",
+    "@tabler/icons-react": "^3.31.0",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-error-boundary": "^5.0.0"
+  }
+}

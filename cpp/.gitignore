@@ -1,0 +1,8 @@
+build
+embuild
+compile_commands.json
+.idea
+.env
+.cache
+data.bin
+settings.json
