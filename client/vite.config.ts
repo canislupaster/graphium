@@ -1,6 +1,9 @@
 import { defineConfig } from "vite";
-import { join } from "path";
-import react from "@vitejs/plugin-react";
+import { extname, join } from "path";
+import { cp } from "fs/promises";
+
+import tailwindcss from '@tailwindcss/vite';
+import preact from '@preact/preset-vite';
 
 export default defineConfig(({command})=>({
 	resolve: {
@@ -14,5 +17,8 @@ export default defineConfig(({command})=>({
       "Cross-Origin-Embedder-Policy": "require-corp"
 		}
 	},
-	plugins: [react()],
+	plugins: [
+		preact(),
+		tailwindcss()
+	],
 }));

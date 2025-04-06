@@ -1,6 +1,3 @@
-#version 300 es
-precision highp float;
-
 uniform mat3 transform;
 
 in vec2 in_coord;

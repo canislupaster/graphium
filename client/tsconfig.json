@@ -5,7 +5,9 @@
     "module": "ESNext",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
+
     "jsx": "react-jsx",
+    "jsxImportSource": "preact",
 
     /* Bundler mode */
     "moduleResolution": "bundler",

@@ -1,2 +1,4 @@
-declare module "*?url" { export = any; }
-declare module "*?raw" { export = string; }
+declare module "*?raw" {
+	const value: string;
+	export default value;
+}

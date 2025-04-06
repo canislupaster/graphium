@@ -20,8 +20,8 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
 endif ()
 
 if (EMSCRIPTEN)
-    set(EMCC_OPTIONS ${EMCC_OPTIONS} "-fwasm-exceptions" "-msimd128" "-g" "-pthread")
-    set(EMCC_LINK_OPTIONS ${EMCC_OPTIONS} ${EMCC_LINK_OPTIONS} "-sENVIRONMENT=web,worker" "-sMODULARIZE" "-sEXPORT_ES6=1" "-sEXPORT_NAME=\"Backend\"" "-lembind" "-sINITIAL_MEMORY=281MB" "-sASSERTIONS" "--emit-tsd" "${CMAKE_SOURCE_DIR}/../client/generated/backend.d.ts" "-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency" "-sALLOW_MEMORY_GROWTH")
+    set(EMCC_OPTIONS ${EMCC_OPTIONS} "-fwasm-exceptions" "-mbulk-memory" "-matomics" "-msimd128" "-g")
+    set(EMCC_LINK_OPTIONS ${EMCC_OPTIONS} ${EMCC_LINK_OPTIONS} "-sENVIRONMENT=web,worker" "-sMODULARIZE" "-sEXPORT_ES6=1" "-sEXPORT_NAME=\"Backend\"" "-sINITIAL_MEMORY=281MB" "-sWASM_WORKERS" "-sASSERTIONS" "--emit-tsd" "${CMAKE_SOURCE_DIR}/../client/generated/backend.d.ts" "-sALLOW_MEMORY_GROWTH")
     target_compile_options(backend PRIVATE ${EMCC_OPTIONS})
     target_link_options(backend PRIVATE ${EMCC_LINK_OPTIONS} "LINKER:--fatal-warnings")
     

@@ -1,81 +1,167 @@
-import { createContext, Suspense, use, useEffect, useState } from "react";
-import { theme, variableResolver } from "./theme";
-import { Alert, Button, Center, Container, Loader, LoadingOverlay, MantineProvider, Modal, Stack, Text, Title } from "@mantine/core";
-import { createRoot, Root } from "react-dom/client";
-import { useDisclosure } from "@mantine/hooks";
-import { IconExclamationCircleFilled } from "@tabler/icons-react";
-import { ErrorBoundary, useErrorBoundary } from "react-error-boundary";
+import "disposablestack/auto";
+
+import { render } from "preact";
+import { Graphics } from "./webgl";
+import { Alert, AppTooltip, bgColor, borderColor, Button, Container, containerDefault, debounce, Divider, ErrorPage, IconButton, interactiveContainerDefault, Modal, Text, Theme, ThemeSpinner, useAsyncEffect } from "./ui";
+import { useCallback, useEffect, useErrorBoundary, useRef, useState } from "preact/hooks";
+import { IconChevronLeft, IconGripVertical, IconX } from "@tabler/icons-preact";
 import { Backend } from "../generated/backend";
+import { Graph } from "./graph";
 
-function ErrorPage({error: err, resetErrorBoundary: reset}: {
-	error: Error, resetErrorBoundary: ()=>void
-}) {
+const themeKey = "theme";
 
-	const [open, handlers] = useDisclosure(true);
-	const title = err?.name ?? "Unknown error";
-	const msg = err?.message ?? "An error occurred.";
+function WASMGraph({backend}: {backend: Backend}) {
+	const ref = useRef<HTMLDivElement>(null);
+	const [graph, setGraph] = useState<Graph>();
 
-	return <>
-		<Modal centered opened={open}
-			styles={{
-				overlay: {zIndex: 1000},
-				inner: {zIndex: 1001}
-			}}
-			onClose={handlers.close}
-			title={title} withCloseButton >
-			<Text>{msg}</Text>
-			<Button onClick={()=>reset()} mt="sm" >Retry</Button>
-		</Modal>
-
-		<Alert variant="light" color="red" title={title} icon={<IconExclamationCircleFilled/>} >
-			<Text>{msg}</Text>
-			<Button onClick={()=>reset()} mt="sm" >Retry</Button>
-		</Alert>
-	</>;
-}
-
-function WASMApp({prom}: {prom: Promise<Backend>}) {
-	const wasm = use(prom);
-	return <>
-		<Text>hi {wasm.isDeleted() ? "a" : "b"}</Text>
-	</>;
-}
-
-function App() {
-	const emptyProm = new Promise<Backend>(()=>{});
-	const [prom, setProm] = useState<Promise<Backend>>();
 	useEffect(()=>{
-		if (!prom) setProm((async ()=> {
-			const mod = await import(/* @vite-ignore */ new URL("/wasm/backend.mjs", window.location.href).href) as typeof import("../generated/backend");
-			return new (await mod.default()).Backend();
-		})());
-	}, [prom]);
+		const g = new Graph(ref.current!, backend);
+		setGraph(g);
+		console.log("graph initialized", g);
+		
+		return ()=>{
+			g[Symbol.dispose]();
+			setGraph(undefined)
+		};
+	}, [backend]);
 
-	return <MantineProvider forceColorScheme="dark" theme={theme} cssVariablesResolver={variableResolver} >
-		<Container py="lg" pt="xl" >
-			<ErrorBoundary FallbackComponent={ErrorPage} onReset={()=>setProm(undefined)} >
-				<Suspense fallback={
-					<Stack align="center" >
-						<Loader/>
-						<Text>Loading WebAssembly...</Text>
-					</Stack>
-				} >
-					<WASMApp prom={prom ?? emptyProm} />
-				</Suspense>
-			</ErrorBoundary>
-		</Container>
-	</MantineProvider>;
+	const minSideBarWidth = 300;
+	const [collapsed, setCollapsed] = useState(false);
+
+	const onGrip = useRef(false);
+	const gripRef = useRef<HTMLDivElement>(null);
+	const sideBarRef = useRef<HTMLDivElement>(null);
+
+	const resize = useCallback((w: number) => {
+		const noTransition = !collapsed && w>=minSideBarWidth;
+		const classList = sideBarRef.current!.classList;
+
+		if (noTransition) {
+			classList.remove("transition-all");
+			classList.add("transition-none");
+		} else {
+			classList.remove("transition-none");
+			classList.add("transition-all");
+		}
+
+		if (w<minSideBarWidth) {
+			sideBarRef.current!.style.width="0px";
+			setCollapsed(true);
+		} else {
+			sideBarRef.current!.style.width=`${w}px`;
+			setCollapsed(false);
+		}
+
+		localStorage.setItem("sidebarWidth", w.toString());
+	}, [collapsed]);
+
+	useEffect(()=>{
+		const root = document.querySelector("html")!;
+
+		if (sideBarRef.current!.style.width=="") {
+			let defaultWidth = window.innerWidth*0.2;
+
+			const it = localStorage.getItem("sidebarWidth");
+			if (it) defaultWidth=Number.parseInt(it, 10);
+
+			resize(defaultWidth);
+		}
+
+		const move = (ev: PointerEvent)=>{
+			if (!onGrip.current) return;
+
+			root.style.userSelect="none";
+			const container = gripRef.current!.parentElement!;
+			const grip = gripRef.current!;
+
+			const w = container.clientLeft + container.clientWidth - ev.clientX - grip.clientWidth/2;
+			resize(w);
+		};
+
+		const up = ()=>{
+			root.style.userSelect="auto";
+			onGrip.current=false;
+		};
+
+		document.addEventListener("pointermove", move);
+		document.addEventListener("pointerup", up);
+		return ()=>{
+			document.removeEventListener("pointermove", move);
+			document.removeEventListener("pointerup", up);
+		};
+	}, [collapsed, resize]);
+
+	useAsyncEffect(async ()=>{
+		if (!graph) return;
+		await graph.render();
+	}, [graph]);
+
+	return <div className="grid h-dvh grid-rows-[auto_auto] w-dvw grid-cols-[auto_auto_auto]" >
+		<div className={`py-2 px-4 ${bgColor.secondary} col-span-3 ${borderColor.default} border-b-1`} >
+			<Text v="big" >top bar</Text>
+		</div>
+		<div ref={ref} className="overflow-hidden" />
+		<AppTooltip content="Resize sidebar" placement="left" noClick ref={gripRef} >
+			<div className={`${bgColor.secondary} ${bgColor.hover} ${borderColor.default}
+					border-l-1
+					flex flex-col items-center justify-center ${collapsed ? "cursor-pointer" : "cursor-ew-resize"}`}
+				onPointerDown={()=>{
+					if (collapsed) resize(minSideBarWidth+40);
+					else onGrip.current=true;
+				}} >
+				{collapsed ? <IconChevronLeft /> : <IconGripVertical />}
+			</div>
+		</AppTooltip>
+		<div className={`${bgColor.secondary} overflow-auto max-h-full duration-500`}
+			ref={sideBarRef} >
+			
+			<div className="p-4" >
+				<Text v="big" >sidebar</Text>
+				<Text>{"a bc def".repeat(4000)}</Text>
+			</div>
+		</div>
+	</div>;
 }
 
-console.log("rendering react app");
-declare global {
-	interface Window {
-		appRoot?: Root;
-	}
+function WASMGraphLoader() {
+	const [backend, setBackend] = useState<Backend|null>();
+
+	useAsyncEffect(async ()=>{
+		const mod = await import(/* @vite-ignore */ new URL("/wasm/backend.mjs", window.location.href).href) as typeof import("../generated/backend");
+
+		const b = new (await mod.default()).Backend();
+		console.log("backend initialized", b);
+		setBackend(b);
+
+		return ()=>{
+			b.delete();
+			setBackend(null);
+		};
+	}, []);
+
+	return backend
+		? <WASMGraph backend={backend} />
+		: <div className="flex flex-col w-full items-center pt-[30dvh] gap-5 mx-5" >
+			<ThemeSpinner size="lg" />
+			<Text v="big" >Loading WebAssembly...</Text>
+		</div>;
+}
+
+function App({theme}: {theme: Theme}) {
+	const [newTheme, setTheme] = useState(theme);
+	useEffect(()=>{
+		if (theme!=newTheme) localStorage.setItem(themeKey, newTheme);
+	}, [newTheme, theme]);
+
+	const [err, resetError] = useErrorBoundary() as [Error|undefined|null, ()=>void];
+	return <Container theme={theme} >
+		{err ? <ErrorPage error={err} retry={resetError} /> : <WASMGraphLoader />}
+	</Container>;
 }
 
 document.addEventListener("DOMContentLoaded", ()=>{
-	if (!window.appRoot)
-		window.appRoot = createRoot(document.getElementById("app")!);
-	window.appRoot.render(<App/>);
+	const initialTheme = localStorage.getItem(themeKey) as Theme
+		?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+
+	render(<App theme={initialTheme} />, document.body);
 });

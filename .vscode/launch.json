@@ -18,6 +18,18 @@
 			"program": "${workspaceFolder}/cpp/build/backend",
 			"args": [],
 			"cwd": "${workspaceFolder}/cpp"
+		},
+		{
+			"request": "launch",
+			"name": "Codegen",
+			"type": "node",
+			"program": "${workspaceFolder}/codegen/main.ts",
+			"cwd": "${workspaceFolder}/codegen",
+			"env": {},
+			"runtimeExecutable": "deno",
+			"runtimeArgs": [ "run", "-A", "--inspect-wait" ],
+			"console": "integratedTerminal",
+			"attachSimplePort": 9229
 		}
 	]
 }
