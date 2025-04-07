@@ -417,7 +417,7 @@ export class VAO<Spec extends BufferSpec, WithElement extends boolean> {
 		for (const v of this.withSize) {
 			const buf = data[v.attribute as Spec[number]["attribute"]].buffer;
 			for (let i=0; i<buf.byteLength; i+=v.size) {
-				all.set(new Uint8Array(buf.slice(i,i+v.size)), i*this.stride + v.off);
+				all.set(new Uint8Array(buf).subarray(i,i+v.size), i*this.stride + v.off);
 			}
 		}
 

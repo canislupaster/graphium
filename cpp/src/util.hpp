@@ -7,6 +7,7 @@
 #include <format>
 #include <functional>
 #include <mutex>
+#include <stdexcept>
 
 using namespace std;
 
@@ -14,38 +15,19 @@ static void run_on_main_internal(function<void()>* f) { (*f)(); }
 inline void run_on_main(function<void()>&& f) {
 	std::function<void()>* p = new std::function<void()>(std::move(f));
 	emscripten_wasm_worker_post_function_sig(EMSCRIPTEN_WASM_WORKER_ID_PARENT, reinterpret_cast<void*>(&run_on_main_internal), "p", p);
+	std::reference_wrapper<int> abc[5];
 }
 
-#include <memory>
-#include <atomic>
 
+struct X {
+	enum class Ty {
+		A,B,C
+	} ty;
 
-struct RCBuffer {
-	atomic<size_t>* count;
-	char* buf=nullptr;
-
-	explicit RCBuffer(char* buf_): buf(buf_) {
-		if (buf) *count() = new std::atomic<size_t>(1);
-	}
-
-	RCBuffer(RCBuffer const& other) {
-		*(*this) = *other;
-		if (*(*this)) (*count()=*other.count())->fetch_add(1);
-	}
-
-	RCBuffer& operator=(RCBuffer const& other) {
-		this->~RCBuffer();
-		*(*this) = *other;
-		if (*(*this)) (*count())->fetch_add(1);
-		return *this;
-	}
-
-	~RCBuffer() {
-		if (*(*this) && (*count())->fetch_sub(-1)==1) {
-			delete *(*this);
-			delete *count();
-		}
-	}
+	union {
+		int,
+		std::string,
+	} inner;
 };
 
 static thread_local atomic_flag done;

@@ -1,9 +1,9 @@
-import { exec, spawn } from "child_process";
-import {existsSync} from "fs";
-import {readFile, writeFile, copyFile} from "fs/promises";
-import { abort, cwd, stdout, stderr, exit } from "process";
-import { promisify, parseArgs } from "util";
-import { join } from "path";
+import { exec, spawn } from "node:child_process";
+import {existsSync} from "node:fs";
+import {readFile, writeFile, copyFile} from "node:fs/promises";
+import { abort, cwd, stdout, stderr, exit } from "node:process";
+import { promisify, parseArgs } from "node:util";
+import { join } from "node:path";
 
 try {
 	const args = parseArgs({
@@ -35,10 +35,10 @@ try {
 
 	console.log(`build dir ${join(cwd(), buildDir)}`)
 
-	function run(cmd) {
+	const run = (cmd: string) => {
 		const proc = spawn(cmd, { shell: true, stdio: "inherit" });
 		console.log(`running ${cmd}`);
-		return new Promise((res,rej) => {
+		return new Promise<void>((res,rej) => {
 			proc.on("error", err=>rej(err));
 			proc.on("close", c=>{
 				if (c!=0) {
@@ -51,7 +51,7 @@ try {
 	}
 
 	if (needConfigure) {
-		await run(`${em ? "emcmake cmake" : "cmake"} . -B${buildDir} -DCMAKE_BUILD_TYPE=${args.type=="debug" ? "Debug" : "RelWithDebInfo"}`);
+		await run(`${em ? "emcmake cmake" : "cmake"} . -B${buildDir} -DCMAKE_BUILD_TYPE=${dbg ? "Debug" : "RelWithDebInfo"}`);
 
 		if (em) {
 			console.log("fixing compile commands...");

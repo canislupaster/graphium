@@ -6,7 +6,13 @@ type BackendError = {
 }
 
 type XD = A { 
-	value: int
+	value: string
 } | B {
-	value2: int
+	value2: int[]
+} | C {
+	value2: int[5]
+}
+
+type Um = {
+	xd: int[10]
 }

@@ -4,15 +4,15 @@
 		{
 			"label": "Configure",
 			"type": "process",
-			"command": "node",
-			"args": ["util.js", "--type", "${input:build}", "--target", "${input:target}", "--configure"],
+			"command": "deno",
+			"args": ["-A", "../util/build.ts", "--type", "${input:build}", "--target", "${input:target}", "--configure"],
 			"options": {"cwd": "${workspaceFolder}/cpp"},
 			"problemMatcher": [],
 		}, {
 			"label": "Build",
 			"type": "process",
-			"command": "node",
-			"args": ["util.js", "--build"],
+			"command": "deno",
+			"args": ["-A", "../util/build.ts", "--build"],
 			"options": {"cwd": "${workspaceFolder}/cpp"},
 			"group": {
 				"kind": "build",
