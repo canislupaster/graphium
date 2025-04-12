@@ -20,8 +20,8 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
 endif ()
 
 if (EMSCRIPTEN)
-    set(EMCC_OPTIONS ${EMCC_OPTIONS} "-fwasm-exceptions" "-mbulk-memory" "-matomics" "-msimd128" "-g")
-    set(EMCC_LINK_OPTIONS ${EMCC_OPTIONS} ${EMCC_LINK_OPTIONS} "-sENVIRONMENT=web,worker" "-sMODULARIZE" "-sEXPORT_ES6=1" "-sEXPORT_NAME=\"Backend\"" "-sINITIAL_MEMORY=281MB" "-sWASM_WORKERS" "-sASSERTIONS" "--emit-tsd" "${CMAKE_SOURCE_DIR}/../client/generated/backend.d.ts" "-sALLOW_MEMORY_GROWTH")
+    set(EMCC_OPTIONS ${EMCC_OPTIONS} "-fwasm-exceptions" "-mbulk-memory" "-matomics" "-msimd128" "-g" "-gsource-map" "--source-map-base" "/wasm")
+    set(EMCC_LINK_OPTIONS ${EMCC_OPTIONS} ${EMCC_LINK_OPTIONS} "-sENVIRONMENT=web,worker" "-sMODULARIZE" "-sEXPORT_ES6=1" "-sEXPORT_NAME=\"Backend\"" "-sINITIAL_MEMORY=281MB" "-sWASM_WORKERS" "-sASSERTIONS" "--emit-tsd" "${CMAKE_SOURCE_DIR}/../client/generated/backend.d.ts" "-sALLOW_MEMORY_GROWTH" "--post-js" "${CMAKE_BINARY_DIR}/post.js" "-sEXPORTED_FUNCTIONS=['_malloc']" "-sEXPORTED_RUNTIME_METHODS=['getExceptionMessage','incrementExceptionRefcount','decrementExceptionRefcount','_wasmWorkerRunPostMessage']")
     target_compile_options(backend PRIVATE ${EMCC_OPTIONS})
     target_link_options(backend PRIVATE ${EMCC_LINK_OPTIONS} "LINKER:--fatal-warnings")
     

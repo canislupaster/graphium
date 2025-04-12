@@ -2,6 +2,7 @@
 
 #include <emscripten.h>
 #include <emscripten/val.h>
+#include <functional>
 
 #include "util.hpp"
 
@@ -13,18 +14,18 @@ struct NodeAttribute {
 	variant<vector<string>, vector<int>, vector<double>> values;
 };
 
-struct ViewModel {
-	optional<int> selected_node;
-	array<double,2> viewport_size;
-	double x,y,zoom;
-};
-
+// "clean" model, mostly all exposed to client
 struct Model {
-	Lock main_lock {"State"};
+	Mutable<View> view = View {
+		.selected_node=nullopt,
+		.viewport_size={1,1},
+		.x=0, .y=0, .zoom=1,
+		.zooming=false
+	};
 
-	ViewModel view;
 	vector<NodeAttribute> attributes;
 
 	int num_nodes, num_edges;
 	Buffers node_bufs, edge_bufs;
+	AnimationManager anim;
 };

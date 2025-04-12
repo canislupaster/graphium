@@ -2,18 +2,18 @@ import preambleSrc from "./preamble.glsl?raw";
 import passthroughVertSrc from "./passthrough.vert?raw";
 import passthroughFragSrc from "./passthrough.frag?raw";
 
-export type Vec2 = [number,number];
-export type Vec3 = [number,number,number];
-export type Vec4 = [number,number,number,number];
-export type Mat2 = [Vec2, Vec2];
-export type Mat3 = [Vec3, Vec3, Vec3];
-export type Mat4 = [Vec4, Vec4, Vec4, Vec4];
+export type Vec2 = readonly [number,number];
+export type Vec3 = readonly [number,number,number];
+export type Vec4 = readonly [number,number,number,number];
+export type Mat2 = readonly [Vec2, Vec2];
+export type Mat3 = readonly [Vec3, Vec3, Vec3];
+export type Mat4 = readonly [Vec4, Vec4, Vec4, Vec4];
 
 export type UniformValue = {
 	float: number, int: number,
 	vec2: Vec2, vec3: Vec3, vec4: Vec4,
 	mat2: Mat2, mat3: Mat3, mat4: Mat4,
-	texture: Texture, ubo: UBO<UBOUniformTypes>
+	texture: Texture
 };
 
 const uniformSizes = {
@@ -22,83 +22,133 @@ const uniformSizes = {
 	mat3: 48, mat4: 64, texture: 4,
 };
 
-export type UniformType = keyof UniformValue;
-export type UniformTypes = Record<string, UniformType>;
-export type UBOUniformValue = Omit<UniformValue, "ubo"|"texture">;
-export type UBOUniformTypes = {
-	name: string, value: keyof UBOUniformValue
-}[];
+export type UBOUniform = { type: "ubo", ubo: UBOUniformTypes };
+export type UniformType = (keyof UniformValue)|UBOUniform;
 
-type SetUniforms = { [K in UniformType]: [
-	K, UniformValue[K], K extends "ubo" ? number : WebGLUniformLocation
-]; }[UniformType][];
-type SetUBOUniforms = { [V in keyof UBOUniformValue]: [
-	{size: number, offset: number}, V, UBOUniformValue[V]
-] }[keyof UBOUniformValue][];
+type UniformValueWithUBO<T extends UniformType> =
+	T extends UBOUniform ? UBO<T["ubo"]>
+	: T extends {type: keyof UniformValue} ? UniformValue[T["type"]] 
+	: never;
+
+export type UniformTypes = Readonly<Record<string, UniformType>>;
+export type UBOUniformValue = Omit<UniformValue, "texture">;
+export type UBOUniformTypes = Readonly<Record<string, keyof UBOUniformValue>>;
+
+type SetUniforms = { [K in (keyof UniformValue)|"ubo"]: [
+	K, K extends "ubo" ? UBO<UBOUniformTypes>
+		: K extends keyof UniformValue ? UniformValue[K] : never,
+	K extends "ubo" ? number : WebGLUniformLocation
+] }[(keyof UniformValue)|"ubo"][];
 
 export class UBO<T extends UBOUniformTypes> implements Disposable {
 	buf: WebGLBuffer;
-	uniformsSized: Record<string, T[number]&{size: number, offset: number}>;
+	uniformsSized: {
+		k: keyof T, type: T[keyof T],
+		offset: number, stride: number,
+		matStride: number, rowMajor: boolean
+	}[] = [];
+	size: number;
+	hostBuf: ArrayBuffer;
 
-	constructor(private g: Graphics, uniforms: T) {
+	constructor(private g: Graphics, program: Program<UniformTypes>, k: string, uniforms: T) {
 		this.buf = this.g.gl.createBuffer();
 		this.g.gl.bindBuffer(this.g.gl.UNIFORM_BUFFER, this.buf);
 
-		let off=0;
-		const arr: (typeof this.uniformsSized)[keyof typeof this.uniformsSized][] = [];
-		for (const x of uniforms) {
-			arr.push({ ...x, offset: off, size: uniformSizes[x.value] });
-			off+=uniformSizes[x.value];
+		// messy
+		if (!(k in program.uniforms) || typeof program.uniforms[k]!="object"
+			|| program.uniforms[k].type!="ubo") {
+			throw new Error(`${k} is not a uniform block`);
 		}
 
-		this.uniformsSized = Object.fromEntries(arr.map(v=>[v.name, v] as const)) as typeof this.uniformsSized;
+		const loc = program.uniformLocation[k];
+		if (typeof loc != "number") throw new Error("location of uniform block isn't a number");
 
-		this.g.gl.bufferData(this.g.gl.UNIFORM_BUFFER, off, this.g.gl.DYNAMIC_DRAW);
+		const indices = this.g.gl.getActiveUniformBlockParameter(program.program, loc, this.g.gl.UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES) as Uint32Array;
+
+		this.size = this.g.gl.getActiveUniformBlockParameter(program.program, loc, this.g.gl.UNIFORM_BLOCK_DATA_SIZE) as GLint;
+		this.hostBuf = new ArrayBuffer(this.size);
+
+		const data = {
+			offsets: this.g.gl.getActiveUniforms(program.program, indices, this.g.gl.UNIFORM_OFFSET) as GLint[],
+			stride: this.g.gl.getActiveUniforms(program.program, indices, this.g.gl.UNIFORM_ARRAY_STRIDE) as GLint[],
+			matStride: this.g.gl.getActiveUniforms(program.program, indices, this.g.gl.UNIFORM_MATRIX_STRIDE) as GLint[],
+			rowMajor: this.g.gl.getActiveUniforms(program.program, indices, this.g.gl.UNIFORM_MATRIX_STRIDE) as GLboolean[]
+		};
+
+		for (let i=0; i<indices.length; i++) {
+			let name = this.g.gl.getActiveUniform(program.program, indices[i])?.name;
+			if (name?.startsWith(`${k}.`)) name=name.slice(`${k}.`.length);
+			if (!name || !(name in uniforms)) {
+				throw new Error(`mismatch in UBO: ${name} not found in uniforms`);
+			}
+
+			this.uniformsSized.push({
+				k: name as keyof T,
+				type: uniforms[name] as T[keyof T],
+				offset: data.offsets[i],
+				stride: data.stride[i],
+				matStride: data.matStride[i],
+				rowMajor: data.rowMajor[i]
+			});
+		}
+
+		this.g.gl.bufferData(this.g.gl.UNIFORM_BUFFER, this.size, this.g.gl.DYNAMIC_DRAW);
 		this.g.check("create UBO");
 	}
 
 	update(values: Partial<{
-		[K in T[number]["name"]]: UBOUniformValue[(T[number]&{name: K})["value"]]
+		[K in keyof T]: UBOUniformValue[T[K]]
 	}>) {
 		this.g.gl.bindBuffer(this.g.gl.UNIFORM_BUFFER, this.buf);
+		const data = new DataView(this.hostBuf);
 
-		for (const [k,ty,v] of Object.entries(values)
-			.map(([k,v]) => {
-				const x = this.uniformsSized[k];
-				return [x, x.value, v];
-			}) as SetUBOUniforms) {
+		for (const uni of this.uniformsSized) {
+			if (values[uni.k]==undefined) continue;
 
-			const buf = new ArrayBuffer(k.size);
+			const {ty, v} = {
+				ty: uni.type, v: values[uni.k]
+			} as { [K in keyof UniformValue]: {ty: K, v: UniformValue[K]} }[
+				Exclude<keyof UniformValue, "texture">
+			];
+
 			switch (ty) {
 				case "float": {
-					new Float32Array(buf)[0] = v;
+					data.setFloat32(uni.offset, v, true);
 					break;
 				}
 				case "int": {
-					new Int32Array(buf)[0] = v;
+					data.setInt32(uni.offset, v, true);
 					break;
 				}
 				case "vec2":
 				case "vec3":
 				case "vec4": {
-					new Float32Array(buf).set(v);
+					for (let i=0, j=uni.offset; i<v.length; i++, j+=uni.stride+4) {
+						data.setFloat32(j, v[i], true);
+					}
 					break;
 				}
 				case "mat2":
 				case "mat3":
 				case "mat4": {
-					new Float32Array(buf).set(v.flat());
+					for (let i=0, j=uni.offset; i<v.length; i++, j+=uni.matStride) {
+						for (let l=0, m=j; l<v.length; l++, m+=uni.stride+4) {
+							data.setFloat32(m, uni.rowMajor ? v[l][i] : v[i][l], true);
+						}
+					}
 					break;
 				}
 			}
-
-			this.g.gl.bufferSubData(this.g.gl.UNIFORM_BUFFER, k.offset, buf);
 		}
+
+		this.g.gl.bufferData(this.g.gl.UNIFORM_BUFFER, this.hostBuf, this.g.gl.DYNAMIC_DRAW);
 	}
 
 	bind() {
 		const {v, init} = this.g.ubo.get(this.buf);
-		if (!init) this.g.gl.bindBufferBase(this.g.gl.UNIFORM_BUFFER, v, this.buf);
+		if (!init) {
+			this.g.gl.bindBufferBase(this.g.gl.UNIFORM_BUFFER, v, this.buf);
+		}
 		return v;
 	}
 
@@ -142,7 +192,7 @@ export class Program<T extends UniformTypes> implements Disposable {
 					this.g.gl.uniformMatrix4fv(loc, false, x.flat());
 					break;
 				case 'texture': {
-					this.g.gl.uniform1i(loc, x.bind());
+					this.g.gl.uniform1i(loc, x.bind({onlyActive: true}));
 					break;
 				}
 				case "ubo": {
@@ -150,7 +200,7 @@ export class Program<T extends UniformTypes> implements Disposable {
 					const ex = this.ubo.get(loc);
 
 					if (ex!=idx) {
-						this.g.gl.uniformBlockBinding(this.program, loc, idx)
+						this.g.gl.uniformBlockBinding(this.program, loc, idx);
 						this.ubo.set(loc, idx);
 					}
 
@@ -160,7 +210,7 @@ export class Program<T extends UniformTypes> implements Disposable {
 		}
 	}
 
-	activate(uniforms: { [K in keyof T]: UniformValue[T[K]] }) {
+	activate(uniforms: { [K in keyof T]: UniformValueWithUBO<T[K]> }) {
 		if (this.g.currentProgram!=this.program) {
 			this.g.currentProgram=this.program;
 			this.g.gl.useProgram(this.program);
@@ -168,7 +218,8 @@ export class Program<T extends UniformTypes> implements Disposable {
 
 		this.ntex=0;
 		this.setUniforms(Object.entries(uniforms).map(([k,v])=>[
-			this.uniforms[k],v,this.uniformLocation[k]
+			typeof this.uniforms[k]=="object" ? this.uniforms[k].type : this.uniforms[k],
+			v, this.uniformLocation[k]
 		]) as SetUniforms);
 	}
 	
@@ -185,11 +236,11 @@ export class Program<T extends UniformTypes> implements Disposable {
 			throw new Error(`Unable to initialize the shader program: ${g.gl.getProgramInfoLog(this.program)}`);
 
 		for (const k in uniforms) {
-			const loc = uniforms[k]=="ubo"
+			const loc = typeof uniforms[k]=="object" && "ubo" in uniforms[k]
 				? g.gl.getUniformBlockIndex(this.program, k)
 				: g.gl.getUniformLocation(this.program, k);
 
-			if (!loc) throw new Error(`Couldn't find uniform ${k}`);
+			if (loc==null) throw new Error(`Couldn't find uniform ${k}`);
 			this.uniformLocation[k as keyof T] = loc;
 		}
 	}
@@ -224,6 +275,7 @@ export class Shader implements Disposable {
 
 export type TextureType = "rgba16f"|"rgba8"|"r8"|"r16f"|"rgb8"|"rgb16f"|"r32i"|"r32f"|"depth32";
 const noFilterTextureType = (x: TextureType) => x=="r32i" || x=="r32f";
+const multisampleSamples = 4;
 
 export type TextureOptions = {
 	interpolation?: "linear"|"nearest", //linear
@@ -232,25 +284,35 @@ export type TextureOptions = {
 	type: TextureType
 };
 
+const textureTypeFormat = (g: Graphics) => ({
+	rgba16f: [g.gl.RGBA, g.gl.RGBA16F, g.gl.FLOAT],
+	rgba8: [g.gl.RGBA, g.gl.RGBA, g.gl.UNSIGNED_BYTE],
+	r8: [g.gl.RED, g.gl.RED, g.gl.UNSIGNED_BYTE],
+	r16f: [g.gl.RED, g.gl.R16F, g.gl.FLOAT],
+	rgb8: [g.gl.RGB, g.gl.RGB, g.gl.UNSIGNED_BYTE],
+	rgb16f: [g.gl.RGB, g.gl.RGB16F, g.gl.FLOAT],
+	r32i: [g.gl.RED_INTEGER, g.gl.R32I, g.gl.INT],
+	r32f: [g.gl.RED, g.gl.R32F, g.gl.FLOAT],
+	depth32: [g.gl.DEPTH_COMPONENT, g.gl.DEPTH_COMPONENT32F, g.gl.FLOAT]
+} as const);
+
 export class Texture implements Disposable {
 	ready=false;
 	tex: WebGLTexture;
 	width=0; height=0;
 
-	bind(needReady=true) {
-		if (!this.ready && needReady) throw new Error("texture isn't initialized");
+	bind({noReady, onlyActive}: {noReady?: boolean, onlyActive?: boolean}={}) {
+		if (!this.ready && !noReady) throw new Error("texture isn't initialized");
 		const {v, init} = this.g.textures.get(this.tex);
 		const texId = this.g.gl.TEXTURE0 + v;
-		if (!init) {
-			this.g.gl.activeTexture(texId);
-			this.g.gl.bindTexture(this.g.gl.TEXTURE_2D, this.tex);
-		}
+		if (!init) this.g.gl.activeTexture(texId);
+		if (!onlyActive) this.g.gl.bindTexture(this.g.gl.TEXTURE_2D, this.tex);
 		return texId;
 	}
 
 	constructor(private g: Graphics, private opts: TextureOptions) {
 		this.tex = this.g.gl.createTexture();
-		this.bind(false);
+		this.bind({noReady: true});
 
 		const integer = noFilterTextureType(opts.type);
 		if (integer && opts.interpolation=="linear")
@@ -282,7 +344,7 @@ export class Texture implements Disposable {
 		image.src=url;
 		await prom;
 
-		this.bind(false);
+		this.bind({noReady: true});
 		this.g.gl.texImage2D(this.g.gl.TEXTURE_2D, 0, this.g.gl.RGBA, image.width, image.height, 0, this.g.gl.RGBA, this.g.gl.UNSIGNED_BYTE, null);
 
 		this.width=image.width; this.height=image.height;
@@ -292,19 +354,9 @@ export class Texture implements Disposable {
 	}
 
 	loadBuffer(buffer: ArrayBufferView|null, width: number, height: number) {
-		const formats = ({
-			rgba16f: [this.g.gl.RGBA, this.g.gl.RGBA16F, this.g.gl.FLOAT],
-			rgba8: [this.g.gl.RGBA, this.g.gl.RGBA, this.g.gl.UNSIGNED_BYTE],
-			r8: [this.g.gl.RED, this.g.gl.RED, this.g.gl.UNSIGNED_BYTE],
-			r16f: [this.g.gl.RED, this.g.gl.R16F, this.g.gl.FLOAT],
-			rgb8: [this.g.gl.RGB, this.g.gl.RGB, this.g.gl.UNSIGNED_BYTE],
-			rgb16f: [this.g.gl.RGB, this.g.gl.RGB16F, this.g.gl.FLOAT],
-			r32i: [this.g.gl.RED_INTEGER, this.g.gl.R32I, this.g.gl.INT],
-			r32f: [this.g.gl.RED, this.g.gl.R32F, this.g.gl.FLOAT],
-			depth32: [this.g.gl.DEPTH_COMPONENT, this.g.gl.DEPTH_COMPONENT32F, this.g.gl.FLOAT]
-		} satisfies Record<TextureType, [GLint, GLint, GLint]>)[this.opts.type];
+		const formats = textureTypeFormat(this.g)[this.opts.type];
 
-		this.bind(false);
+		this.bind({noReady: true});
 		if (this.width==width && this.height==height) {
 			this.g.gl.texSubImage2D(this.g.gl.TEXTURE_2D, 0, 0,0,width,height, formats[0], formats[2], buffer);
 		} else {
@@ -321,10 +373,38 @@ export class Texture implements Disposable {
 	}
 }
 
+export class RenderBuffer implements Disposable {
+	buf: WebGLRenderbuffer;
+	internalFormat: GLenum;
+	width=0; height=0;
+	ready=false;
+
+	resize(width: number, height: number) {
+		this.g.gl.bindRenderbuffer(this.g.gl.RENDERBUFFER, this.buf);
+		this.width=width; this.height=height;
+		if (this.opts.multisample!=undefined) {
+			this.g.gl.renderbufferStorageMultisample(this.g.gl.RENDERBUFFER,
+				this.opts.multisample ? multisampleSamples : 0, this.internalFormat, width, height);
+		} else {
+			this.g.gl.renderbufferStorage(this.g.gl.RENDERBUFFER, this.internalFormat, width, height);
+		}
+		this.ready=true;
+	}
+
+	constructor(private g: Graphics, private opts: {
+		multisample?: boolean, type: TextureType
+	}) {
+		this.buf = this.g.gl.createRenderbuffer();
+		this.internalFormat = textureTypeFormat(this.g)[this.opts.type][1];
+	}
+
+	[Symbol.dispose]() { this.g.gl.deleteRenderbuffer(this.buf); }
+}
+
 abstract class Renderable<T extends UniformTypes> {
 	protected abstract program: Program<T>;
 	protected abstract draw(): void;
-	render(uniforms: { [K in keyof T]: UniformValue[T[K]] }) {
+	render(uniforms: { [K in keyof T]: UniformValueWithUBO<T[K]> }) {
 		this.program.activate(uniforms);
 		this.draw();
 	}
@@ -422,7 +502,6 @@ export class VAO<Spec extends BufferSpec, WithElement extends boolean> {
 		}
 
 		this.g.gl.bindBuffer(this.g.gl.ARRAY_BUFFER, this.array);
-		console.log(all);
 		this.g.gl.bufferData(this.g.gl.ARRAY_BUFFER, all, this.g.gl.DYNAMIC_DRAW);
 	}
 
@@ -482,47 +561,76 @@ export class Rectangle<T extends UniformTypes> extends Geometry<T> {
 	}
 }
 
-type FBOChannel = ({type: "depth"}|{ type: "color", i: number })&{ tex: Texture };
+export type FBOChannel = ({type: "depth"}|{ type: "color" })&{ tex: Texture|RenderBuffer };
 
 export class FBO implements Disposable {
 	fbo: WebGLFramebuffer;
-	buffers: (FBOChannel&{attachment: GLenum})[]=[];
+	channels: FBOChannel[] = [];
+	toAttachment = new Map<FBOChannel, GLenum>();
+	drawBufs: GLenum[]=[];
 
-	check() {
+	width: number;
+	height: number;
+	resizeCb?: (w: number, h: number)=>void;
+
+	private check() {
 		const status = this.g.gl.checkFramebufferStatus(this.g.gl.FRAMEBUFFER);
 		if (status != this.g.gl.FRAMEBUFFER_COMPLETE) {
-			const key = Object.entries(this.g.gl)
-				.find(([,v]) => v==status)?.[0] ?? "Unknown enum";
-			throw new Error(`Framebuffer is incomplete: ${status} or ${key}`);
+			const key = this.g.glEnumToName(status);
+			console.log(this.g.gl);
+			throw new Error(`Framebuffer is incomplete: ${status} or ${key ?? "(unknown)"}`);
 		}
 	}
 
 	resize(width: number, height: number) {
 		this.width=width; this.height=height;
-		for (const buf of this.buffers) {
+		for (const buf of this.toAttachment.keys()) {
 			if (buf.tex.width!=width || buf.tex.height!=height) {
-				buf.tex.loadBuffer(null, width, height);
+				if (buf.tex instanceof Texture) buf.tex.loadBuffer(null, width, height);
+				else if (buf.tex instanceof RenderBuffer) buf.tex.resize(width, height);
 			}
 		}
 	}
 
 	setChannels(channels: FBOChannel[]) {
+		this.channels=channels;
+		this.toAttachment.clear();
+		this.drawBufs=[];
+
 		this.g.gl.bindFramebuffer(this.g.gl.FRAMEBUFFER, this.fbo);
 
-		this.buffers=[];
 		let numColor = 0;
 		for (const chan of channels) {
 			const attach = chan.type=="depth" ? this.g.gl.DEPTH_ATTACHMENT
 				: this.g.gl.COLOR_ATTACHMENT0 + numColor++;
-			this.buffers.push({...chan, attachment: attach});
-			this.g.gl.framebufferTexture2D(this.g.gl.FRAMEBUFFER, attach, this.g.gl.TEXTURE_2D, chan.tex.tex, 0);
+			this.toAttachment.set(chan, attach);
+			if (chan.type!="depth") this.drawBufs.push(attach);
+			
+			if (chan.tex instanceof Texture) {
+				chan.tex.bind({noReady: true});
+				this.g.gl.framebufferTexture2D(this.g.gl.FRAMEBUFFER, attach, this.g.gl.TEXTURE_2D, chan.tex.tex, 0);
+			} else if (chan.tex instanceof RenderBuffer) {
+				this.g.gl.bindRenderbuffer(this.g.gl.RENDERBUFFER, chan.tex.buf);
+				this.g.gl.framebufferRenderbuffer(this.g.gl.FRAMEBUFFER, attach, this.g.gl.RENDERBUFFER, chan.tex.buf);
+			}
 		}
 
 		this.resize(this.width, this.height);
+
+		this.check();
+		this.g.gl.bindFramebuffer(this.g.gl.FRAMEBUFFER, null);
 	}
 
-	constructor(private g: Graphics, public width: number, public height: number, channels: FBOChannel[]=[]) {
+	constructor(private g: Graphics, dim: [number, number]|null, channels: FBOChannel[]=[]) {
 		this.fbo = this.g.gl.createFramebuffer();
+		
+		if (dim==null) {
+			this.resizeCb = this.resize.bind(this);
+			this.g.onResize.add(this.resizeCb);
+			[this.width, this.height] = [this.g.width, this.g.height];
+		} else {
+			[this.width, this.height] = dim;
+		}
 
 		this.g.gl.bindFramebuffer(this.g.gl.FRAMEBUFFER, this.fbo);
 		this.g.gl.blendFunc(this.g.gl.SRC_ALPHA, this.g.gl.ONE_MINUS_SRC_ALPHA);
@@ -533,6 +641,7 @@ export class FBO implements Disposable {
 
 	[Symbol.dispose]() {
 		this.g.gl.deleteFramebuffer(this.fbo);
+		if (this.resizeCb) this.g.onResize.delete(this.resizeCb);
 	}
 }
 
@@ -545,10 +654,10 @@ export class BindResource<T> {
 
 	get(v: T): {v: number, init: boolean} {
 		const slot = this.resourceMap.get(v);
-		if (slot) return {v: slot, init: true};
+		if (slot!=undefined) return {v: slot, init: true};
 
 		const existing = this.resources[this.nResource];
-		if (existing) this.resourceMap.delete(existing);
+		if (existing!=null) this.resourceMap.delete(existing);
 
 		this.resourceMap.set(v, this.nResource);
 		this.resources[this.nResource] = v;
@@ -558,6 +667,10 @@ export class BindResource<T> {
 		return {v: ret, init: false};
 	}
 }
+
+export type DrawBuffer = FBOChannel|{type: "color"|"depth"};
+export type ClearDrawBuffers = ([DrawBuffer&{type: "color"}, Vec4]
+	| [DrawBuffer&{type: "depth"}, number])[];
 
 export class Graphics extends DisposableStack {
 	gl: WebGL2RenderingContext;
@@ -579,6 +692,7 @@ export class Graphics extends DisposableStack {
 
 	width=0;
 	height=0;
+	onResize = new Set<(width: number, height: number)=>void>();
 
 	resize(width: number, height: number) {
 		this.height = this.canvas.height = this.scale*height;
@@ -586,15 +700,21 @@ export class Graphics extends DisposableStack {
 
 		this.canvas.style.width=`${width}px`;
 		this.canvas.style.height=`${height}px`;
+		this.onResize.forEach(x=>x(width, height));
 	}
 
-	constructor(mount: HTMLElement, autosize: boolean) {
+	constructor(opts: {
+		mount: HTMLElement, autosize?: boolean,
+		multisample?: boolean
+	}) {
 		super();
 
 		this.canvas = document.createElement("canvas");
-		mount.appendChild(this.canvas);
+		opts.mount.appendChild(this.canvas);
 
-		this.gl = this.canvas.getContext("webgl2")!;
+		this.gl = this.canvas.getContext("webgl2", { antialias: opts.multisample })!;
+
+		this.gl.enable(this.gl.DEPTH_TEST);
 
 		this.gl.enable(this.gl.BLEND);
 		this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
@@ -605,48 +725,101 @@ export class Graphics extends DisposableStack {
 			throw new Error("WebGL extensions missing");
 		}
 
-		if (autosize) {
+		if (opts.autosize) {
 			this.observer = new ResizeObserver(() => {
-				this.resize(mount.clientWidth, mount.clientHeight)
+				this.resize(opts.mount.clientWidth, opts.mount.clientHeight)
 			});
 			
-			this.observer.observe(mount);
-			this.resize(mount.clientWidth, mount.clientHeight);
+			this.observer.observe(opts.mount);
+			this.resize(opts.mount.clientWidth, opts.mount.clientHeight);
 		}
 
 		this.passthroughVertexShader = this.use(new Shader(this, "vertex", passthroughVertSrc));
 		this.passthroughFragmentShader = this.use(new Shader(this, "fragment", passthroughFragSrc));
 		this.passthrough = this.use(new Program(this, this.passthroughFragmentShader, this.passthroughVertexShader, {tex: "texture", transform: "mat3"}));
 
-		this.textures = new BindResource<WebGLTexture>(this.gl.getParameter(this.gl.MAX_TEXTURE_IMAGE_UNITS) as number);
-		this.ubo = new BindResource<WebGLBuffer>(this.gl.getParameter(this.gl.MAX_UNIFORM_BUFFER_BINDINGS) as number);
+		this.textures = new BindResource<WebGLTexture>(this.gl.getParameter(this.gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) as number);
+		this.ubo = new BindResource<WebGLBuffer>(this.gl.getParameter(this.gl.MAX_COMBINED_UNIFORM_BLOCKS) as number);
+		this.check("init graphics");
 	}
 
 	setTarget(fbo: FBO|null) {
-		if (fbo==this.target) return;
-
 		if (fbo) {
-			this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fbo.fbo);
-			fbo.check();
-			this.gl.drawBuffers(fbo.buffers.map(x=>x.attachment));
+			if (this.target!=fbo) {
+				this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fbo.fbo);
+				this.gl.drawBuffers(fbo.drawBufs);
+			}
+
 			this.gl.viewport(0,0,fbo.width,fbo.height);
 		} else {
-			this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+			if (this.target!=null) this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
 			this.gl.viewport(0,0,this.canvas.width,this.canvas.height);
 		}
+
+		this.target=fbo;
+		this.check("fbo / viewport");
+	}
+	
+	setDrawBuffer(buf: DrawBuffer|null) {
+		if (buf==null) {
+			if (this.target) this.gl.drawBuffers(this.target.drawBufs);
+			return;
+		}
+
+		if (this.target) {
+			const attach2 = this.target.toAttachment.get(buf as FBOChannel);
+			if (!attach2) throw new Error("channel does not belong to target FBO");
+			if (buf.type!="depth") this.gl.drawBuffers([attach2]);
+		}
+	}
+
+	copyFrom(fbo: FBO, channelMap: [FBOChannel, DrawBuffer][]) {
+		this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, fbo.fbo);
+		const fboDim = [fbo.width,fbo.height] as const;
+		const targetDim = [this.target?.width ?? this.width, this.target?.height ?? this.height] as const;
+
+		for (const [a,b] of channelMap) {
+			const attach = fbo.toAttachment.get(a);
+			if (!attach) throw new Error("channel does not belong to source FBO");
+			if (b.type!=a.type) throw new Error("mismatched channel types");
+
+			if (a.type!="depth") this.gl.readBuffer(attach);
+
+			this.setDrawBuffer(b);
+
+			this.gl.blitFramebuffer(
+				0,0,...fboDim, 0,0, ...targetDim,
+				a.type=="color" ? this.gl.COLOR_BUFFER_BIT : this.gl.DEPTH_BUFFER_BIT,
+				this.gl.NEAREST
+			);
+		}
+
+		this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, null);
+		this.setDrawBuffer(null);
 	}
 
 	textures: BindResource<WebGLTexture>;
 	ubo: BindResource<WebGLBuffer>;
 
-	clear(color: Vec4) {
-		this.gl.clearColor(...color);
-		this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+	clear(arg: ClearDrawBuffers) {
+		for (const x of arg) {
+			this.setDrawBuffer(x[0]);
+			if (x[0].type=="color") {
+				this.gl.clearColor(...x[1] as Vec4);
+				this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+			} else {
+				this.gl.clearDepth(x[1] as number);
+				this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
+			}
+		}
+
+		this.setDrawBuffer(null);
 		this.check("clear");
 	}
 
 	async render() {
 		const t = await new Promise<number>(res => requestAnimationFrame((t)=>res(t)));
+		this.setTarget(null);
 
 		if (this.prev_t>0) {
 			this.fps = this.fps*0.8 + 0.2*1000/(t-this.prev_t);
@@ -655,10 +828,18 @@ export class Graphics extends DisposableStack {
 
 		//log any errors
 		this.check("rendering");
-		this.prev_t=t;
+		return this.prev_t=t;
 	}
 
 	errLimit = 100;
+	glEnumToName(v: number) {
+		for (const k in this.gl) {
+			if ((this.gl as unknown as Record<string,number>)[k]==v) return k;
+		}
+
+		return null;
+	}
+
 	check(message?: string) {
 		const err = this.gl.getError();
 		if (err!=this.gl.NO_ERROR) {
@@ -666,12 +847,8 @@ export class Graphics extends DisposableStack {
 				return;
 			}
 
-			let name=null;
-			for (const [k,v] of Object.entries(this.gl)) {
-				if (v==err) name=k;
-			}
-
 			console.error(`WebGL Error${message ? ` (${message})` : ""}: (code \n${err})`);
+			const name = this.glEnumToName(err);
 			if (name!=null) console.error(name);
 		}
 	}

@@ -5,21 +5,21 @@
 			"label": "Configure",
 			"type": "process",
 			"command": "deno",
-			"args": ["-A", "../util/build.ts", "--type", "${input:build}", "--target", "${input:target}", "--configure"],
-			"options": {"cwd": "${workspaceFolder}/cpp"},
+			"args": ["-A", "util/build.ts", "--type", "${input:build}", "--target", "${input:target}", "--configure"],
+			"options": {"cwd": "${workspaceFolder}"},
 			"problemMatcher": [],
 		}, {
 			"label": "Build",
 			"type": "process",
 			"command": "deno",
-			"args": ["-A", "../util/build.ts", "--build"],
-			"options": {"cwd": "${workspaceFolder}/cpp"},
+			"args": ["-A", "util/build.ts", "--build", "--transpile"],
+			"options": {"cwd": "${workspaceFolder}"},
 			"group": {
 				"kind": "build",
 			},
 			"problemMatcher": [
 				"$gcc"
-			],
+			]
 		}
 	],
 	"inputs": [

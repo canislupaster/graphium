@@ -5,14 +5,27 @@ import { Graphics } from "./webgl";
 import { Alert, AppTooltip, bgColor, borderColor, Button, Container, containerDefault, debounce, Divider, ErrorPage, IconButton, interactiveContainerDefault, Modal, Text, Theme, ThemeSpinner, useAsyncEffect } from "./ui";
 import { useCallback, useEffect, useErrorBoundary, useRef, useState } from "preact/hooks";
 import { IconChevronLeft, IconGripVertical, IconX } from "@tabler/icons-preact";
-import { Backend } from "../generated/backend";
+import { BackendError, MainModule } from "../generated/backend";
 import { Graph } from "./graph";
+import { Backend, Handler, useSubscription } from "./backend";
+import React from "preact/compat";
 
 const themeKey = "theme";
 
 function WASMGraph({backend}: {backend: Backend}) {
 	const ref = useRef<HTMLDivElement>(null);
 	const [graph, setGraph] = useState<Graph>();
+
+	const [errors, setErrors] = useState<BackendError[]>([]);
+	const [showErrors, setShowErrors] = useState(false);
+	
+	useSubscription(backend, {
+		type: backend.mod.ToClient.BackendError,
+		f({value}) {
+			setErrors(errs=>showErrors ? [...errs, value] : [value]);
+			setShowErrors(true);
+		}
+	}, [showErrors]);
 
 	useEffect(()=>{
 		const g = new Graph(ref.current!, backend);
@@ -21,7 +34,7 @@ function WASMGraph({backend}: {backend: Backend}) {
 		
 		return ()=>{
 			g[Symbol.dispose]();
-			setGraph(undefined)
+			setGraph(undefined);
 		};
 	}, [backend]);
 
@@ -74,7 +87,8 @@ function WASMGraph({backend}: {backend: Backend}) {
 			const container = gripRef.current!.parentElement!;
 			const grip = gripRef.current!;
 
-			const w = container.clientLeft + container.clientWidth - ev.clientX - grip.clientWidth/2;
+			const w = container.getBoundingClientRect().left
+				+ container.clientWidth - ev.clientX - grip.clientWidth/2;
 			resize(w);
 		};
 
@@ -97,6 +111,20 @@ function WASMGraph({backend}: {backend: Backend}) {
 	}, [graph]);
 
 	return <div className="grid h-dvh grid-rows-[auto_auto] w-dvw grid-cols-[auto_auto_auto]" >
+		<Modal bad open={showErrors} title={errors.length>1 ? `${errors.length} errors occurred`
+			: errors.length==1 ? errors[0].message : "An error occurred"}
+			onClose={()=>setShowErrors(false)} >
+
+			{errors.length==1 ? <>
+				<p>That's unfortunate.</p>
+				<Text v="dim" >Details: {errors[0].extra}</Text>
+			</> : errors.map((err,i)=><React.Fragment key={i} >
+				<Text v="bold" >{err.message}</Text>
+				{err.extra && <Text v="dim" >{err.extra}</Text>}
+				{i<errors.length-1 && <Divider contrast />}
+			</React.Fragment>)}
+		</Modal>
+
 		<div className={`py-2 px-4 ${bgColor.secondary} col-span-3 ${borderColor.default} border-b-1`} >
 			<Text v="big" >top bar</Text>
 		</div>
@@ -123,18 +151,22 @@ function WASMGraph({backend}: {backend: Backend}) {
 	</div>;
 }
 
+const modPromise = (async ()=>{
+	const mod = await import(/* @vite-ignore */ new URL("/wasm/backend.mjs", window.location.href).href) as typeof import("../generated/backend");
+	return await mod.default();
+})();
+
 function WASMGraphLoader() {
 	const [backend, setBackend] = useState<Backend|null>();
 
 	useAsyncEffect(async ()=>{
-		const mod = await import(/* @vite-ignore */ new URL("/wasm/backend.mjs", window.location.href).href) as typeof import("../generated/backend");
-
-		const b = new (await mod.default()).Backend();
+		const b = new Backend(await modPromise);
 		console.log("backend initialized", b);
 		setBackend(b);
 
 		return ()=>{
-			b.delete();
+			console.log("de-initializing backend", b);
+			b[Symbol.dispose]();
 			setBackend(null);
 		};
 	}, []);
@@ -153,7 +185,9 @@ function App({theme}: {theme: Theme}) {
 		if (theme!=newTheme) localStorage.setItem(themeKey, newTheme);
 	}, [newTheme, theme]);
 
-	const [err, resetError] = useErrorBoundary() as [Error|undefined|null, ()=>void];
+	const [err, resetError] = useErrorBoundary((err,info)=>{
+		console.error(err,info);
+	}) as [Error|undefined|null, ()=>void];
 	return <Container theme={theme} >
 		{err ? <ErrorPage error={err} retry={resetError} /> : <WASMGraphLoader />}
 	</Container>;

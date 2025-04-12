@@ -1,5 +1,5 @@
 #pragma once
-#include <condition_variable>
+#include "util.hpp"
 #include <deque>
 #include <emscripten.h>
 #include <emscripten/wasm_worker.h>
@@ -14,15 +14,15 @@ struct Pool {
 	vector<emscripten_wasm_worker_t> workers;
 	deque<function<void()>> queue;
 	
-	mutex lock;
-	condition_variable cv;
+	Mutex lock;
+	ConditionVariable cv;
 
 	static void run_pool(Pool* pool) {
 		unique_lock lock(pool->lock);
 		while (true) {
 			while (pool->queue.empty()) pool->cv.wait(lock);
 
-			auto&& task = std::move(pool->queue.front());
+			std::function<void()> task = std::move(pool->queue.front());
 			pool->queue.pop_front();
 
 			lock.unlock();
@@ -35,9 +35,9 @@ struct Pool {
 
 	template<class T>
 	void launch(T f) {
-		unique_lock guard(lock);
+		lock.spinlock();
 		queue.push_back(f);
-		guard.unlock();
+		lock.unlock();
 
 		cv.notify_one();
 	}

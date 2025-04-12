@@ -151,7 +151,7 @@ export const Alert = ({title, txt, bad, className}: {
 	</div>;
 
 export const Divider = ({className, contrast}: {className?: string, contrast?: boolean}) =>
-	<span className={twMerge(`w-full h-px ${
+	<span className={twMerge(`w-full h-px shrink-0 ${
 			contrast ? "dark:bg-zinc-400 bg-zinc-500" : "dark:bg-zinc-600 bg-zinc-300"
 		} my-2`, className)} />;
 
@@ -255,9 +255,9 @@ export function Modal({bad, open, onClose, title, children, className, ...props}
 	return <div className={`fixed left-0 top-0 bottom-0 right-0 z-40 bg-black/30 opacity-0 transition-opacity duration-1000 flex flex-col md:pt-40 pt-10 px-10 md:px-40 items-center`}
 		style={{opacity: open ? 1 : 0, pointerEvents: open ? undefined : "none"}}
 		>
-		<div className={twMerge(`${bad ? `${bgColor.red} ${borderColor.red}` : `${bgColor.default} ${borderColor.default}`} rounded-md p-5 container flex items-stretch flex-col relative`, className)} {...props} >
+		<div className={twMerge(`${bad ? `${bgColor.red} ${borderColor.red}` : `${bgColor.default} ${borderColor.default}`} rounded-md p-5 container flex items-stretch flex-col relative max-h-[calc(min(50rem,70dvh))] overflow-auto`, className)} {...props} >
 			{onClose && <IconButton icon={<IconX />}
-				className={`absolute -top-5 -right-5`}
+				className={`absolute top-3 right-2 z-30 [:not(:hover)]:theme:bg-transparent [:not(:hover)]:border-transparent`}
 				onClick={()=>onClose()} />}
 			{title && <>
 				<Text v="big">{title}</Text>

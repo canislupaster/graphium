@@ -44,6 +44,6 @@ export default [
       parserOptions: { projectService: true },
     }
   }, {
-    ignores: ["dist", "public", "generated"]
+    ignores: ["dist"]
   })
 ];
