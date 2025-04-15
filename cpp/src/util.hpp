@@ -11,9 +11,15 @@
 #include <list>
 #include <mutex>
 #include <type_traits>
+#include "gtl/phmap.hpp"
 #include "../build/generated.hpp"
 
 using namespace std;
+
+template<class K, class V>
+using HashMap = gtl::flat_hash_map<K,V>;
+template<class K>
+using HashSet = gtl::flat_hash_set<K>;
 
 inline const char* kind_message(BackendErrorKind kind) {
 	switch (kind.value) {
@@ -22,29 +28,6 @@ inline const char* kind_message(BackendErrorKind kind) {
 	}
 }
 
-template<class T>
-struct Buffer {
-	int size=0;
-	vector<T> value;
-	bool dirty=false;
-
-	void update_range(int from, int to, T const* ptr) {
-		copy(ptr, ptr+to-from, value.get()+from);
-		dirty=true;
-	}
-
-	void resize(int n) {
-		if (n==size) return;
-		value.resize(n);
-		dirty=true;
-	}
-};
-
-struct Buffers {
-	Buffer<float> floats;
-	Buffer<unsigned char> chars;
-};
-        
 class BackendErrorEx: exception {
 	string buf;
 public:

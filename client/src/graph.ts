@@ -96,9 +96,11 @@ export class Graph extends DisposableStack {
 	edgeGeometry: EdgeGeometry;
 	viewUBO: UBO<typeof viewUBO>;
 	fbo: FBO;
+	hitFBO: FBO;
 	depthBuf: RenderBuffer;
 	colorBuf: RenderBuffer;
 	hitIndexBuf: RenderBuffer;
+	hitIndexTex: RenderBuffer;
 
 	view?: View;
 	mousePos = new Map<number, Readonly<[number, number]>>();
@@ -112,39 +114,61 @@ export class Graph extends DisposableStack {
 			f: (ev)=>{
 				this.mousePos.delete(ev.pointerId);
 				if (this.mousePos.size==0) {
-					backend.send({
-						type: backend.mod.ToBackend.ViewportMove,
-						value: new backend.mod.ViewportMove(null, false)
-					});
+					backend.send(new backend.mod.ViewportMove(null, false));
 				}
 			}
 		}));
 
 		this.use(listener(root, {
 			type: "pointerdown",
-			f: (ev)=>{ this.mousePos.set(ev.pointerId, [ev.clientX, ev.clientY]); }
+			f: (ev)=>{
+				this.mousePos.set(ev.pointerId, [ev.clientX, ev.clientY]);
+
+				if (ev.pressure<0.5) return;
+
+				this.g.setTarget(this.hitFBO);
+				this.g.copyFrom(this.fbo, [ [this.fbo.channels[2], this.hitFBO.channels[0]] ]);
+
+				const hit = new Int32Array([0]);
+				const box = this.g.canvas.getBoundingClientRect();
+
+				this.g.readPixels({
+					fbo: this.hitFBO,
+					channel: this.hitFBO.channels[0] as FBOChannel&{type: "color"},
+					rect: { x: ev.clientX-box.left, y: box.bottom-ev.clientY, width: 1, height: 1 },
+					buf: hit
+				});
+
+				this.backend.send(new this.backend.mod.Click(
+					hit[0]>0 ? new this.backend.mod.ClickNode(hit[0]-1)
+						: hit[0]<0 ? new this.backend.mod.ClickEdge(-hit[0]-1)
+						: new this.backend.mod.ClickNone()
+				));
+			}
 		}));
 
 		this.use(listener(root, {
 			type: "wheel",
 			f: (ev)=>{
-				// only pixels supported
-				if (ev.deltaMode!=WheelEvent.DOM_DELTA_PIXEL) return;
 				ev.preventDefault();
 
-				const scrollAmount = ev.deltaX + ev.deltaY + ev.deltaZ;
+				let scrollAmount = ev.deltaX + ev.deltaY + ev.deltaZ;
+				if (ev.deltaMode!=WheelEvent.DOM_DELTA_PIXEL) scrollAmount*=100;
+
 				if (ev.shiftKey || ev.altKey) {
-					backend.send({
-						type: backend.mod.ToBackend.ViewportOffset,
-						value: new backend.mod.ViewportOffset([
-							ev.shiftKey ? scrollAmount : 0, ev.altKey ? scrollAmount : 0
-						] as const)
-					});
+					backend.send(new backend.mod.ViewportOffset([
+						ev.shiftKey ? scrollAmount : 0, ev.altKey ? scrollAmount : 0
+					] as const));
+				
+				} else if (ev.deltaMode==WheelEvent.DOM_DELTA_PIXEL) {
+					// probably trackpad, can use deltaXYZ and ctrlkey
+					if (!ev.ctrlKey) {
+						backend.send(new backend.mod.ViewportOffset([ ev.deltaX, -ev.deltaY ] as const));
+					} else {
+						backend.send(new backend.mod.ViewportScrollZoom(-5.0*ev.deltaY));
+					}
 				} else {
-					backend.send({
-						type: backend.mod.ToBackend.ViewportScrollZoom,
-						value: new backend.mod.ViewportScrollZoom(scrollAmount)
-					});
+					backend.send(new backend.mod.ViewportScrollZoom(scrollAmount));
 				}
 			}
 		}))
@@ -156,18 +180,12 @@ export class Graph extends DisposableStack {
 
 				if (this.mousePos.size==2) {
 					const [a,b] = [...this.mousePos.values()];
-					backend.send({
-						type: backend.mod.ToBackend.ViewportTouchZoom,
-						value: new backend.mod.ViewportTouchZoom(Math.hypot(a[0]-b[0], a[1]-b[1]))
-					});
+					backend.send(new backend.mod.ViewportTouchZoom(Math.hypot(a[0]-b[0], a[1]-b[1])));
 				} else if (ev.buttons&1) {
 					const rect = this.g.canvas.getBoundingClientRect();
 					const pos = [ev.clientX - rect.left, rect.bottom - ev.clientY] as const;
 
-					backend.send({
-						type: backend.mod.ToBackend.ViewportMove,
-						value: new backend.mod.ViewportMove(pos, ev.shiftKey)
-					});
+					backend.send(new backend.mod.ViewportMove(pos, ev.shiftKey));
 				}
 			}
 		}));
@@ -186,18 +204,18 @@ export class Graph extends DisposableStack {
 		this.depthBuf = this.use(new RenderBuffer(this.g, {type: "depth32"}));
 		this.colorBuf = this.use(new RenderBuffer(this.g, {type: "rgba16f"}));
 		this.hitIndexBuf = this.use(new RenderBuffer(this.g, {type: "r32i"}));
+		this.hitIndexTex = this.use(new RenderBuffer(this.g, {type: "r32i"}));
 
 		this.fbo = this.use(new FBO(this.g, null, [
 			{type: "depth", tex: this.depthBuf},
 			{type: "color", tex: this.colorBuf},
 			{type: "color", tex: this.hitIndexBuf},
 		]));
+		
+		this.hitFBO = this.use(new FBO(this.g, null, [ {type: "color", tex: this.hitIndexTex} ]));
 
 		this.g.onResize.add((w,h)=>{
-			this.backend.send({
-				type: this.backend.mod.ToBackend.ViewportResize,
-				value: new this.backend.mod.ViewportResize(w,h)
-			});
+			this.backend.send(new this.backend.mod.ViewportResize(w,h));
 		});
 
 		this.nodeGeometry = this.use(new NodeGeometry(this.g));
@@ -257,10 +275,7 @@ export class Graph extends DisposableStack {
 			}
 
 			const t = await this.g.render();
-			this.backend.send({
-				type: this.backend.mod.ToBackend.AnimationFrame,
-				value: new this.backend.mod.AnimationFrame(t)
-			});
+			this.backend.send(new this.backend.mod.AnimationFrame(t));
 		}
 	}
 }

@@ -38,6 +38,10 @@ struct Backend {
 		}
 	}
 
+	void handle(Click const& click) {
+		// ...
+	}
+	
 	void handle(ViewportResize const& new_size) {
 		state.view.mutate([=](View& v){
 			v.viewport_size={new_size.w, new_size.h};		

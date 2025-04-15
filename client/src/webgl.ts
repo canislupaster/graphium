@@ -285,20 +285,23 @@ export type TextureOptions = {
 };
 
 const textureTypeFormat = (g: Graphics) => ({
-	rgba16f: [g.gl.RGBA, g.gl.RGBA16F, g.gl.FLOAT],
-	rgba8: [g.gl.RGBA, g.gl.RGBA, g.gl.UNSIGNED_BYTE],
-	r8: [g.gl.RED, g.gl.RED, g.gl.UNSIGNED_BYTE],
-	r16f: [g.gl.RED, g.gl.R16F, g.gl.FLOAT],
-	rgb8: [g.gl.RGB, g.gl.RGB, g.gl.UNSIGNED_BYTE],
-	rgb16f: [g.gl.RGB, g.gl.RGB16F, g.gl.FLOAT],
-	r32i: [g.gl.RED_INTEGER, g.gl.R32I, g.gl.INT],
-	r32f: [g.gl.RED, g.gl.R32F, g.gl.FLOAT],
-	depth32: [g.gl.DEPTH_COMPONENT, g.gl.DEPTH_COMPONENT32F, g.gl.FLOAT]
+	rgba16f: [g.gl.RGBA, g.gl.RGBA16F, g.gl.FLOAT, 4],
+	rgba8: [g.gl.RGBA, g.gl.RGBA, g.gl.UNSIGNED_BYTE, 4],
+	r8: [g.gl.RED, g.gl.RED, g.gl.UNSIGNED_BYTE, 1],
+	r16f: [g.gl.RED, g.gl.R16F, g.gl.FLOAT, 1],
+	rgb8: [g.gl.RGB, g.gl.RGB, g.gl.UNSIGNED_BYTE, 3],
+	rgb16f: [g.gl.RGB, g.gl.RGB16F, g.gl.FLOAT, 3],
+	r32i: [g.gl.RED_INTEGER, g.gl.R32I, g.gl.INT, 1],
+	r32f: [g.gl.RED, g.gl.R32F, g.gl.FLOAT, 1],
+	depth32: [g.gl.DEPTH_COMPONENT, g.gl.DEPTH_COMPONENT32F, g.gl.FLOAT, 1]
 } as const);
+
+type TextureFormatInfo = ReturnType<typeof textureTypeFormat>[keyof ReturnType<typeof textureTypeFormat>];
 
 export class Texture implements Disposable {
 	ready=false;
 	tex: WebGLTexture;
+	format: TextureFormatInfo;
 	width=0; height=0;
 
 	bind({noReady, onlyActive}: {noReady?: boolean, onlyActive?: boolean}={}) {
@@ -325,6 +328,8 @@ export class Texture implements Disposable {
 		const wrap = opts.wrap=="clamp" ? this.g.gl.CLAMP_TO_EDGE : this.g.gl.REPEAT;
 		this.g.gl.texParameteri(this.g.gl.TEXTURE_2D, this.g.gl.TEXTURE_WRAP_S, wrap);
 		this.g.gl.texParameteri(this.g.gl.TEXTURE_2D, this.g.gl.TEXTURE_WRAP_T, wrap);
+
+		this.format = textureTypeFormat(this.g)[this.opts.type];
 	}
 
 	private generateMipmaps() {
@@ -354,13 +359,13 @@ export class Texture implements Disposable {
 	}
 
 	loadBuffer(buffer: ArrayBufferView|null, width: number, height: number) {
-		const formats = textureTypeFormat(this.g)[this.opts.type];
-
 		this.bind({noReady: true});
 		if (this.width==width && this.height==height) {
-			this.g.gl.texSubImage2D(this.g.gl.TEXTURE_2D, 0, 0,0,width,height, formats[0], formats[2], buffer);
+			this.g.gl.texSubImage2D(this.g.gl.TEXTURE_2D, 0, 0,0,width,height,
+				this.format[0], this.format[2], buffer);
 		} else {
-			this.g.gl.texImage2D(this.g.gl.TEXTURE_2D, 0, formats[1], width, height, 0, formats[0], formats[2], buffer);
+			this.g.gl.texImage2D(this.g.gl.TEXTURE_2D, 0, this.format[1], width, height,
+				0, this.format[0], this.format[2], buffer);
 			this.width=width; this.height=height;
 		}
 
@@ -375,7 +380,7 @@ export class Texture implements Disposable {
 
 export class RenderBuffer implements Disposable {
 	buf: WebGLRenderbuffer;
-	internalFormat: GLenum;
+	format: TextureFormatInfo;
 	width=0; height=0;
 	ready=false;
 
@@ -384,9 +389,9 @@ export class RenderBuffer implements Disposable {
 		this.width=width; this.height=height;
 		if (this.opts.multisample!=undefined) {
 			this.g.gl.renderbufferStorageMultisample(this.g.gl.RENDERBUFFER,
-				this.opts.multisample ? multisampleSamples : 0, this.internalFormat, width, height);
+				this.opts.multisample ? multisampleSamples : 0, this.format[1], width, height);
 		} else {
-			this.g.gl.renderbufferStorage(this.g.gl.RENDERBUFFER, this.internalFormat, width, height);
+			this.g.gl.renderbufferStorage(this.g.gl.RENDERBUFFER, this.format[1], width, height);
 		}
 		this.ready=true;
 	}
@@ -395,7 +400,7 @@ export class RenderBuffer implements Disposable {
 		multisample?: boolean, type: TextureType
 	}) {
 		this.buf = this.g.gl.createRenderbuffer();
-		this.internalFormat = textureTypeFormat(this.g)[this.opts.type][1];
+		this.format = textureTypeFormat(this.g)[this.opts.type];
 	}
 
 	[Symbol.dispose]() { this.g.gl.deleteRenderbuffer(this.buf); }
@@ -638,7 +643,7 @@ export class FBO implements Disposable {
 
 		this.setChannels(channels);
 	}
-
+	
 	[Symbol.dispose]() {
 		this.g.gl.deleteFramebuffer(this.fbo);
 		if (this.resizeCb) this.g.onResize.delete(this.resizeCb);
@@ -671,6 +676,14 @@ export class BindResource<T> {
 export type DrawBuffer = FBOChannel|{type: "color"|"depth"};
 export type ClearDrawBuffers = ([DrawBuffer&{type: "color"}, Vec4]
 	| [DrawBuffer&{type: "depth"}, number])[];
+	
+type BufferType = Uint8Array|Int8Array|Float32Array|Int32Array|Uint32Array;
+const bufferTypeToGLFormat = (g: Graphics): Map<BufferType["constructor"], [GLenum, boolean]> =>
+	new Map(([
+		[Uint8Array, g.gl.UNSIGNED_BYTE, false], [Int8Array, g.gl.BYTE, true],
+		[Float32Array, g.gl.FLOAT, false], [Int32Array, g.gl.INT, true],
+		[Uint32Array, g.gl.UNSIGNED_INT, true]
+	] as const).map(([a,b,c])=>[a,[b,c]]));
 
 export class Graphics extends DisposableStack {
 	gl: WebGL2RenderingContext;
@@ -740,6 +753,9 @@ export class Graphics extends DisposableStack {
 
 		this.textures = new BindResource<WebGLTexture>(this.gl.getParameter(this.gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) as number);
 		this.ubo = new BindResource<WebGLBuffer>(this.gl.getParameter(this.gl.MAX_COMBINED_UNIFORM_BLOCKS) as number);
+
+		this.btypeToFormat = bufferTypeToGLFormat(this);
+
 		this.check("init graphics");
 	}
 
@@ -772,19 +788,29 @@ export class Graphics extends DisposableStack {
 			if (buf.type!="depth") this.gl.drawBuffers([attach2]);
 		}
 	}
+	
+	readSource: FBO|null=null;
+	setReadBuffer(fbo: FBO|null, chan?: DrawBuffer) {
+		if (this.readSource!=fbo) {
+			this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, fbo?.fbo ?? null);
+			this.readSource = fbo;
+		}
+
+		if (!fbo || !chan) return;
+
+		const attach = fbo.toAttachment.get(chan as FBOChannel);
+		if (!attach) throw new Error("channel does not belong to source FBO");
+		if (chan.type!="depth") this.gl.readBuffer(attach);
+	}
 
 	copyFrom(fbo: FBO, channelMap: [FBOChannel, DrawBuffer][]) {
-		this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, fbo.fbo);
 		const fboDim = [fbo.width,fbo.height] as const;
 		const targetDim = [this.target?.width ?? this.width, this.target?.height ?? this.height] as const;
 
 		for (const [a,b] of channelMap) {
-			const attach = fbo.toAttachment.get(a);
-			if (!attach) throw new Error("channel does not belong to source FBO");
 			if (b.type!=a.type) throw new Error("mismatched channel types");
 
-			if (a.type!="depth") this.gl.readBuffer(attach);
-
+			this.setReadBuffer(fbo, a);
 			this.setDrawBuffer(b);
 
 			this.gl.blitFramebuffer(
@@ -794,8 +820,8 @@ export class Graphics extends DisposableStack {
 			);
 		}
 
-		this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, null);
 		this.setDrawBuffer(null);
+		this.setReadBuffer(null);
 	}
 
 	textures: BindResource<WebGLTexture>;
@@ -815,6 +841,37 @@ export class Graphics extends DisposableStack {
 
 		this.setDrawBuffer(null);
 		this.check("clear");
+	}
+	
+	btypeToFormat: ReturnType<typeof bufferTypeToGLFormat>;
+	// pretty bad as far as wrappers go
+	readPixels({ fbo, channel, rect, nDim, buf, offset }: {
+		fbo?: FBO, channel: DrawBuffer&{ type: "color" },
+		rect?: Record<"x" | "y" | "width" | "height", number>,
+		buf: BufferType, offset?: number, nDim?: number | "alpha"
+	}) {
+		this.setReadBuffer(fbo ?? null, channel);
+
+		const nDimToFormat = {
+			1: this.gl.RED, 2: this.gl.RG, 3: this.gl.RGB,
+			4: this.gl.RGBA, alpha: this.gl.ALPHA,
+			i1: this.gl.RED_INTEGER, i2: this.gl.RG_INTEGER,
+			i3: this.gl.RGB_INTEGER, i4: this.gl.RGBA_INTEGER
+		} as Record<string,GLenum|undefined>;
+
+		const btype = this.btypeToFormat.get(buf.constructor);
+		if (!btype) throw new Error("buffer type not supported");
+
+		nDim ??= !("tex" in channel) ? 4 : channel.tex.format[3];
+
+		const src = !("tex" in channel) ? this : channel.tex;
+		rect ??= {x:0, y:0, width: src.width, height: src.height};
+
+		const format = nDimToFormat[btype[1] ? `i${nDim}` : nDim];
+		if (!format) throw new Error("readpixels with this format not supported");
+		
+		this.gl.readPixels(rect.x, rect.y, rect.width, rect.height, format,
+			btype[0], buf, offset ?? 0);
 	}
 
 	async render() {

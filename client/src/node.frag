@@ -14,5 +14,5 @@ void main() {
 	float highlight_opacity = highlight*clamp((r2-out_scale*min(out_scale*out_scale, 100.0)*0.0000001)*3.0, 0.0, 1.0);
 
 	fragColor = vec4(mix(out_fill, highlight_color, highlight_opacity), 1.0)*opacity;
-	nodeIndex = out_node_index;
+	nodeIndex = opacity>0.9 ? out_node_index+1 : 0;
 }

@@ -8,8 +8,14 @@ flat out float highlight;
 flat out int out_node_index;
 
 void main(void) {
+	if ((flags&2u) != 0u) {
+		gl_PointSize=0.0;
+		gl_Position = vec4(0.0,0.0,-1.0,1.0);
+		return;
+	}
+
 	out_fill = fill;
-	highlight = float(flags);
+	highlight = float(flags&1u);
 	out_scale = 25.0*xyr.z*max(view.viewport.z, view.viewport.w)*view.dpi;
 	out_node_index = gl_InstanceID;
 	gl_PointSize = out_scale;

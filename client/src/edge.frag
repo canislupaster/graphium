@@ -22,7 +22,7 @@ void main() {
 
 	float w = min(1.5*edge_mul,1.0)*min(4.0*lmul,1.0);
 	float highlight_amount = highlight*(1.0 - w*w*corner.y*0.01);
-	fragColor = min(10.0*edge_mul,1.0)*min(10.0*lmul,1.0)
-		*vec4(mix(out_fill, highlight_color, highlight_amount), 1.0);
-	edgeIndex = -out_edge_index-1;
+	float opacity = min(10.0*edge_mul,1.0)*min(10.0*lmul,1.0);
+	fragColor = opacity*vec4(mix(out_fill, highlight_color, highlight_amount), 1.0);
+	edgeIndex = opacity>0.9 ? -out_edge_index-1 : 0;
 }

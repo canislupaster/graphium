@@ -6,20 +6,14 @@ type BackendError = {
 	extra: string
 }
 
-type BufferBlock = {
-	node_buffer: buffer,
-	edge_buffer: buffer
-}
-
 type ToClient = 
 	| BackendError
 	| GraphBuffer {
-		block: int,
-		data: BufferBlock,
-		num_blocks: int
+		which: GraphBufferType ("Node" | "Edge"),
+		pos: uint?, end_pos: uint?, buf: buffer
 	}
 	| View {
-		selected_node: int?,
+		selected_node: uint?,
 		viewport_size: double[2],
 		x: double, y: double, zoom: double,
 		zooming: bool
@@ -32,3 +26,8 @@ type ToBackend =
 	| ViewportTouchZoom { dist: double }
 	| ViewportScrollZoom { delta: double }
 	| AnimationFrame { t: double }
+	| Click (
+		| ClickNode { node: uint }
+		| ClickEdge { edge: uint }
+		| ClickPos { pos: double[2] }
+	)

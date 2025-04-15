@@ -2,19 +2,15 @@
 
 #include <emscripten.h>
 #include <emscripten/val.h>
-#include <functional>
 
 #include "util.hpp"
+#include "graph.hpp"
 
 using namespace std;
 
 struct NodeAttribute {
-	string attrib_name;
-	vector<bool> init;
-	variant<vector<string>, vector<int>, vector<double>> values;
 };
 
-// "clean" model, mostly all exposed to client
 struct Model {
 	Mutable<View> view = View {
 		.selected_node=nullopt,
@@ -26,6 +22,6 @@ struct Model {
 	vector<NodeAttribute> attributes;
 
 	int num_nodes, num_edges;
-	Buffers node_bufs, edge_bufs;
+	
 	AnimationManager anim;
 };

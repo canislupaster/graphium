@@ -2,8 +2,8 @@ import "disposablestack/auto";
 
 import { render } from "preact";
 import { Graphics } from "./webgl";
-import { Alert, AppTooltip, bgColor, borderColor, Button, Container, containerDefault, debounce, Divider, ErrorPage, IconButton, interactiveContainerDefault, Modal, Text, Theme, ThemeSpinner, useAsyncEffect } from "./ui";
-import { useCallback, useEffect, useErrorBoundary, useRef, useState } from "preact/hooks";
+import { Alert, AppTooltip, bgColor, borderColor, Button, Container, containerDefault, debounce, Divider, ErrorPage, IconButton, interactiveContainerDefault, Modal, Text, Theme, ThemeContext, ThemeSpinner, useAsyncEffect, useTheme } from "./ui";
+import { useCallback, useEffect, useErrorBoundary, useMemo, useRef, useState } from "preact/hooks";
 import { IconChevronLeft, IconGripVertical, IconX } from "@tabler/icons-preact";
 import { BackendError, MainModule } from "../generated/backend";
 import { Graph } from "./graph";
@@ -125,8 +125,9 @@ function WASMGraph({backend}: {backend: Backend}) {
 			</React.Fragment>)}
 		</Modal>
 
-		<div className={`py-2 px-4 ${bgColor.secondary} col-span-3 ${borderColor.default} border-b-1`} >
-			<Text v="big" >top bar</Text>
+		<div className={`py-2 px-4 ${bgColor.secondary} col-span-3 ${borderColor.default} border-b-1 flex flex-row gap-2 items-center`} >
+			<img src={useTheme()=="dark" ? "/logolight.svg" : "/logodark.svg"} className="w-10" />
+			<Text v="big" className="pt-1" >Graphium</Text>
 		</div>
 		<div ref={ref} className="overflow-hidden" />
 		<AppTooltip content="Resize sidebar" placement="left" noClick ref={gripRef} >
@@ -184,13 +185,15 @@ function App({theme}: {theme: Theme}) {
 	useEffect(()=>{
 		if (theme!=newTheme) localStorage.setItem(themeKey, newTheme);
 	}, [newTheme, theme]);
+	const themeCtx = useMemo(()=>({ theme, setTheme }), [theme, setTheme]);
 
 	const [err, resetError] = useErrorBoundary((err,info)=>{
 		console.error(err,info);
 	}) as [Error|undefined|null, ()=>void];
-	return <Container theme={theme} >
+
+	return <ThemeContext.Provider value={themeCtx} ><Container>
 		{err ? <ErrorPage error={err} retry={resetError} /> : <WASMGraphLoader />}
-	</Container>;
+	</Container></ThemeContext.Provider>;
 }
 
 document.addEventListener("DOMContentLoaded", ()=>{

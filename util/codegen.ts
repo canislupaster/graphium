@@ -5,7 +5,7 @@ export function transpile(inputs: {
 }[]): {
 	cpp: string, js: string, dts: string
 } {
-	const baseTypes = ["string","double","int","buffer","ptr","bool"] as const;
+	const baseTypes = ["string","double","int","uint","buffer","ptr","bool"] as const;
 
 	type Token = ({
 		type: "type"|"or"|"lparen"|"rparen"
@@ -46,7 +46,9 @@ export function transpile(inputs: {
 	const input = inputs.map(v=>v.str).join("");
 
 	function mergeColors(...str: string[]) {
-		let txt=""; const styles=[];
+		let txt="";
+		const styles: string[]=[];
+
 		for (let i=0; i<str.length;) {
 			const nxt = i+1+(str[i].match(/%c/g)?.length ?? 0);
 			assert(nxt<=str.length);
@@ -294,10 +296,11 @@ export function transpile(inputs: {
 			const ident = expect("ident");
 			const v = names.get(ident.name);
 
-			if (peek()=="left") return parseObj(ident.name, ident);
-			else if (peek()=="lparen") {
+			if (peek()=="left") {
+				d=parseObj(ident.name, ident);
+			} else if (peek()=="lparen") {
 				expect("lparen");
-				const ret = parseUnion(name, ident);
+				const ret = parseUnion(ident.name, ident);
 				expect("rparen");
 				d=ret;
 			} else if (v) {
@@ -444,6 +447,7 @@ export function transpile(inputs: {
 						RCBuffer(char* buf_, size_t len_, std::atomic<size_t>* count_): buf(buf_), len(len_), count(count_) {}
 
 					public:
+						constexpr RCBuffer() {}
 						explicit RCBuffer(char* buf_, size_t len_): buf(buf_), len(len_) {
 							if (buf) count = new std::atomic<size_t>(1);
 						}
@@ -570,7 +574,8 @@ export function transpile(inputs: {
 		cppDeserialize: (varName: string, sourcePtr: string)=>string
 		jsSerialize: (expr: string, targetPtr: string, name: string)=>string,
 		jsDeserialize: (varName: string, sourcePtr: string)=>string,
-		jsDestruct?: (expr: string, name: string)=>string
+		jsDestruct?: (expr: string, name: string)=>string,
+		isTsClass?: boolean
 	};
 
 	const metas = new Map<Definition, Meta>();
@@ -649,6 +654,11 @@ export function transpile(inputs: {
 			size: {type: "fixed", value: 8},
 			...trivialSerde("double", "f64", 8)
 		},
+		uint: {
+			cppname: "uint64_t", tsname: "number",
+			size: {type: "fixed", value: 8},
+			...trivialSerde("uint64_t", "u64", 8)
+		},
 		int: {
 			cppname: "int64_t", tsname: "number",
 			size: {type: "fixed", value: 8},
@@ -661,7 +671,8 @@ export function transpile(inputs: {
 			cppDeserialize(varName, src) { return `RCBuffer ${varName} = RCBuffer::deserialize(${src});`; },
 			jsSerialize(expr, target) { return `${expr}.serialize(${target});`; },
 			jsDeserialize(varName, src) { return `const ${varName} = RCBuffer.deserialize(${src});`; },
-			jsDestruct(expr) { return `${expr}[Symbol.dispose]();` }
+			jsDestruct(expr) { return `${expr}[Symbol.dispose]();` },
+			isTsClass: true
 		},
 		ptr: {
 			cppname: "char*", tsname: "number",
@@ -969,7 +980,7 @@ export function transpile(inputs: {
 				cpp += `
 					struct ${def.name} {
 						enum Inner { ${def.defs.map(v=>v.value).join(", ")} } value;
-						${def.name}(Inner value_): value(value_) {}
+						constexpr ${def.name}(Inner value_): value(value_) {}
 						
 						constexpr size_t serialization_size() const { return ${tagSize}; }
 						void serialize(char*& ${bufName}) const {
@@ -1085,24 +1096,42 @@ export function transpile(inputs: {
 					type ${def.name}Union = ${unionPart};
 				`;
 
+				const classTypes = withMeta.filter(x=>x.meta.isTsClass)
+				const classTypeStr = classTypes.map(v=>`|${v.meta.tsname}`).join("");
+
 				makeTsClass(def.name, `
 					${symbols.tsClassDecl}
 					readonly type: ${symbols.tsUnion};
 					readonly value: ${withMeta.map(v=>`(${v.meta.tsname})`).join("|")};
-					constructor(arg: Readonly<${def.name}Union>);
+					constructor(arg: Readonly<${def.name}Union>${classTypeStr});
 				`, true);
 
 				tsClasses.push({name: def.name, type: `(typeof ${def.name})&{
 					deserialize(source: Cursor): ${def.name}&${def.name}Union;
-					new(arg: Readonly<${def.name}Union>): ${def.name}&${def.name}Union;
+					new(arg: Readonly<${def.name}Union>${classTypeStr}): ${def.name}&${def.name}Union;
 				}`, instanceType: `${def.name}&${def.name}Union`})
 
 				const jsDefaultCase = `default: throw new Error("invalid value of union ${def.name}");`
 				js += `
 					class ${def.name} {
 						${symbols.classDecl}
+						${classTypes.length>0 ? `
+							static classTypes = new Map([
+								${classTypes.map(v=>`[${v.meta.tsname}, ${symbols.accessor[v.i]}]`).join(",")}
+							]);
+						` : ""}
 
-						constructor(arg) { this.type=arg.type; this.value=arg.value; }
+
+						constructor(arg) {
+							${classTypes.length>0 ? `
+								if (arg.constructor!=Object) {
+									this.type = ${def.name}.classTypes.get(arg.constructor);
+									this.value = arg;
+								} else {
+							` : ""}
+							this.type=arg.type; this.value=arg.value;
+							${classTypes.length>0 ? "}" : ""}
+						}
 
 						[Symbol.dispose]() {
 							${withMeta.map(x=>!x.meta.jsDestruct ? null : `
@@ -1168,7 +1197,8 @@ export function transpile(inputs: {
 				`${def.name} ${varName} = ${def.name}::deserialize(${sourcePtr});`,
 			jsSerialize: (expr, target)=>`${expr}.serialize(${target});`,
 			jsDeserialize: (varName, src)=>`const ${varName} = ${def.name}.deserialize(${src});`,
-			jsDestruct: needJsDestruct ? (expr)=>`${expr}[Symbol.dispose]();` : undefined
+			jsDestruct: needJsDestruct ? (expr)=>`${expr}[Symbol.dispose]();` : undefined,
+			isTsClass: true
 		});
 	}, ()=>{
 		// skip def on error

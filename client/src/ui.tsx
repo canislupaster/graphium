@@ -405,15 +405,20 @@ export function Dropdown({parts, trigger, onOpenChange}: {
 }
 
 export type Theme = "light"|"dark";
+export const ThemeContext = createContext<{
+	theme: Theme, setTheme:(x: Theme)=>void
+}>(undefined as never)
+export const useTheme = ()=>useContext(ThemeContext).theme;
 
-export function Container({theme, children, className, ...props}: {
-	theme: Theme, children?: ComponentChildren, className?: string
+export function Container({children, className, ...props}: {
+	children?: ComponentChildren, className?: string
 }&JSX.HTMLAttributes<HTMLDivElement>) {
+	const theme = useContext(ThemeContext);
 	useEffect(() => {
 		const html = document.getElementsByTagName("html")[0];
-		html.classList.add(theme);
-		return () => html.classList.remove(theme);
-	}, [theme])
+		html.classList.add(theme.theme);
+		return () => html.classList.remove(theme.theme);
+	}, [theme]);
 
 	const [count, setCount] = useState(0);
 	const incCount = useCallback(()=>{
